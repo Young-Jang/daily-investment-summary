@@ -1,0 +1,89 @@
+version: '3.9'
+
+# ─── 공통 설정 ────────────────────────────────────────────────────────────────
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+# ─── 서비스 ───────────────────────────────────────────────────────────────────
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: investment-postgres
+    restart: always
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-investment_db}
+      POSTGRES_USER:     ${POSTGRES_USER:-investment_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-investment_pass}
+      TZ: Asia/Seoul
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-investment_user} -d ${POSTGRES_DB:-investment_db}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+    logging: *default-logging
+
+  # ── Backend (Spring Boot) ───────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: investment-backend
+    restart: always
+    environment:
+      SPRING_DATASOURCE_URL:      jdbc:postgresql://postgres:5432/${POSTGRES_DB:-investment_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-investment_user}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-investment_pass}
+      GEMINI_API_KEY:             ${GEMINI_API_KEY}
+      GEMINI_API_URL:             ${GEMINI_API_URL:-https://generativelanguage.googleapis.com}
+      GEMINI_MODEL:               ${GEMINI_MODEL:-gemini-2.0-flash}
+      SPRING_PROFILES_ACTIVE:     ${SPRING_PROFILES_ACTIVE:-prod}
+      TZ: Asia/Seoul
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health | grep -q '\"status\":\"UP\"' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 90s   # Spring Boot 기동 시간 고려
+      retries: 3
+    logging: *default-logging
+
+  # ── Frontend (Flutter Web + Nginx) ──────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        API_BASE_URL: ${API_BASE_URL:-http://backend:8080}
+    container_name: investment-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/index.html | grep -q 'Flutter' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging: *default-logging
+
+# ─── 볼륨 ─────────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
