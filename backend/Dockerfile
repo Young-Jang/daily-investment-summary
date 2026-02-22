@@ -3,8 +3,8 @@ FROM gradle:8.6-jdk21-alpine AS builder
 WORKDIR /app
 
 # 의존성 캐시 레이어 (소스 변경 시 재다운로드 방지)
+# gradle:8.6-jdk21-alpine 이미지에 Gradle이 내장되어 있으므로 wrapper 불필요
 COPY build.gradle.kts settings.gradle.kts ./
-COPY gradle gradle
 RUN gradle dependencies --no-daemon --quiet || true
 
 # 소스 빌드
